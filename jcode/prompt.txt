@@ -1,0 +1,4 @@
+
+## 翻译文档为中文
+## 文档连接：https://github.com/1jehuang/jcode/blob/master/docs/HOOKS.md
+## 输出要求：输出为 ```markdown``` 格式, 在外层 ```markdown 代码块中，必须将所有内层子代码块的起始和结束标记转义（如 ```bash 和 ``` 转义为 \`\`\`bash 和 \`\`\`）bash, text, toml, plantuml 等所有的markdown内容都需要转义，以避免与外层标记冲突导致解析截断。如果读取文档的时候分批次读取了，那么输出的时候，每批次的文档，都要遵守这个输出要求。
