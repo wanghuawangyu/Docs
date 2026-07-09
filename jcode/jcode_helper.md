@@ -58,6 +58,7 @@
     - [记忆工具](#记忆工具)
     - [记忆 CLI 命令](#记忆-cli-命令)
     - [记忆存存储位置](#记忆存存储位置)
+    - [环境依赖与模型下载](#环境依赖与模型下载)
   - [Swarm 群体协作](#swarm-群体协作)
     - [核心特性](#核心特性)
     - [工作流](#工作流)
@@ -866,6 +867,7 @@ MCP 服务器使用 JSON 格式配置：
 
 | 命令 | 说明 |
 |------|------|
+| `/alignment` | 切换对齐方式（左对齐/居中） |
 | `/model` | 切换模型 |
 | `/account` | 切换账号（多账号支持） |
 | `/reload` | 热重载服务器 |
@@ -974,6 +976,58 @@ jcode memory stats               # 记忆统计
 ├── clusters/
 └── tags/
 ```
+
+### 环境依赖与模型下载
+
+记忆系统使用嵌入模型（Embedding Model）将文本转换为语义向量，实现相似度检索。
+
+**本地嵌入模型（默认）：**
+
+当 `[agents]` 中 `memory_embedding_backend = "local"`（默认值）时，Jcode 使用 **all-MiniLM-L6-v2** 模型进行语义嵌入。该模型由以下 Rust 库直接在 Jcode 进程中加载运行：
+
+- **tract-hir / tract-onnx** — Rust 原生 ONNX 推理引擎，编译在 Jcode 二进制中
+- **tokenizers** — HuggingFace 分词器（Rust 实现，也是编译在二进制中）
+
+**无需提前安装任何外部工具**（Python、PyTorch、ONNX Runtime 等）。
+
+首次启动服务器时，会自动从 Hugging Face 下载模型文件到以下目录：
+
+```
+~/.jcode/models/all-MiniLM-L6-v2/
+├── model.onnx          (~23 MB)
+└── tokenizer.json
+```
+
+**自动下载失败时的处理：**
+
+如果自动下载失败（网络受限、无法访问 Hugging Face 等），可手动下载并放置到对应目录：
+
+1. 创建模型目录：
+   ```bash
+   mkdir -p ~/.jcode/models/all-MiniLM-L6-v2
+   ```
+
+2. 从 Hugging Face 下载两个文件：
+   - [model.onnx](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/onnx/model.onnx)（约 23 MB）
+   - [tokenizer.json](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/tokenizer.json)
+
+3. 将下载的文件放入 `~/.jcode/models/all-MiniLM-L6-v2/` 目录
+
+4. 重启 Jcode 服务器，系统将自动加载已存在的模型文件，跳过下载步骤。
+
+**远程嵌入后端（可选）：**
+
+若环境不便运行本地模型，可改用 OpenAI 兼容的远程嵌入服务：
+
+```toml
+[agents]
+memory_embedding_backend = "openai"
+memory_embedding_model = "text-embedding-3-small"
+memory_embedding_base_url = "https://api.openai.com/v1"
+memory_embedding_dim = 1536
+```
+
+要求对应的 API Key 具有 embeddings 权限。远程嵌入的优势是不占用本地 CPU/内存资源，且向量维度可配置。
 
 ---
 
