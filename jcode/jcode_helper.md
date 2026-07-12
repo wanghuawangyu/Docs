@@ -90,9 +90,20 @@
     - [MCP 在 Jcode 中的作用](#mcp-在-jcode-中的作用)
     - [Jcode 推荐的 MCP 使用方式](#jcode-推荐的-mcp-使用方式)
     - [配置文件位置与优先级](#配置文件位置与优先级)
+  - [Skills（技能系统）](#skills技能系统)
+    - [核心概念](#核心概念)
+    - [Skill 文件格式（SKILL.md）](#skill-文件格式skillmd)
+    - [安装位置](#安装位置)
+    - [使用方法](#使用方法)
+      - [1. 通过斜杠命令调用（推荐）](#1-通过斜杠命令调用推荐)
+      - [2. 通过 skill\_manage 工具（Agent 使用）](#2-通过-skill_manage-工具agent-使用)
+    - [三个内置推荐 Skill](#三个内置推荐-skill)
+    - [从外部导入](#从外部导入)
+    - [更多 Skill](#更多-skill)
+    - [注意事项](#注意事项-1)
   - [Swarm 群体协作](#swarm-群体协作)
     - [适用场景](#适用场景)
-    - [核心概念](#核心概念)
+    - [核心概念](#核心概念-1)
     - [核心特性](#核心特性)
     - [工作流](#工作流)
     - [常见触发方式](#常见触发方式)
@@ -1682,6 +1693,123 @@ memory_embedding_dim = 1536
 > **注意：** Jcode 目前只支持 stdio 协议的 MCP 服务器（通过 `command` + `args` 启动子进程）。HTTP/SSE 传输协议尚未支持。
 >
 > 首次启动时，如果 `~/.jcode/mcp.json` 不存在，Jcode 会尝试从 `~/.claude.json`、`~/.claude/mcp.json` 和 `~/.codex/config.toml` 导入 MCP 配置。
+
+---
+
+## Skills（技能系统）
+
+Skills 是 Jcode 的**技能系统**，通过 `SKILL.md` 文件定义一组结构化提示词，可以被 Agent 按需加载和使用。可以将 Skills 理解为 Agent 的"专业插件"——当需要特定领域的专业知识或工作流程时，加载对应 Skill 即可让 Agent 获得该领域的指导。
+
+### 核心概念
+
+| 概念 | 说明 |
+|------|------|
+| **Skill** | 一个 `SKILL.md` 文件，包含 YAML 前置元数据和 Markdown 正文，定义了特定的行为指令 |
+| **注册表（SkillRegistry）** | 全局技能注册中心，管理所有已加载的 Skill |
+| **斜杠命令（/skill-name）** | 在输入框中以 `/` 开头输入技能名即可调用对应 Skill |
+| **skill_manage 工具** | Agent 管理 Skills 的内置工具，支持 `load`、`list`、`reload`、`reload_all`、`read` 操作 |
+
+### Skill 文件格式（SKILL.md）
+
+每个 Skill 存放在独立的目录中，目录名即为技能名。目录内必须包含 `SKILL.md` 文件，格式如下：
+
+```markdown
+---
+name: skill-name           # 技能名称（必填，也是斜杠命令名）
+description: 一行描述     # 技能描述（必填）
+allowed-tools: bash, read, write  # 允许使用的工具列表（可选）
+---
+
+# Skill 正文
+
+Markdown 格式的提示词内容，告诉 Agent 如何使用这个 Skill。
+```
+
+### 安装位置
+
+Skills 可以从以下位置加载，按优先级从高到低排列：
+
+| 位置 | 范围 | 说明 |
+|------|------|------|
+| `./.jcode/skills/<name>/SKILL.md` | **项目级** | 当前项目的专属技能，仅对该项目生效 |
+| `./.agents/skills/<name>/SKILL.md` | **项目级** | 跨工具标准 `.agents` 目录 |
+| `./.claude/skills/<name>/SKILL.md` | **项目级** | 兼容 Claude Code 的项目技能目录 |
+| `~/.jcode/skills/<name>/SKILL.md` | **全局** | Jcode 全局技能，对所有项目可见 |
+| `~/.agents/skills/<name>/SKILL.md` | **全局** | 跨工具共享的全局技能目录 |
+| `~/.claude/plugins/.../skills/` | **全局** | Claude Code 插件提供的技能（只读） |
+
+项目级技能的优先级高于全局技能，同名时项目级覆盖全局级。
+
+### 使用方法
+
+#### 1. 通过斜杠命令调用（推荐）
+
+在 TUI 输入框中直接输入：
+
+```
+/optimization 优化这段代码
+```
+
+Jcode 会自动识别斜杠命令，加载对应 Skill，并将后续文字作为提示提交。
+
+不带参数单独使用：
+```
+/optimization
+```
+此时仅加载 Skill 的提示内容到上下文中，不附带额外输入。
+
+#### 2. 通过 skill_manage 工具（Agent 使用）
+
+Agent 使用 `skill_manage` 工具管理 Skills：
+
+```json
+{
+  "action": "load",
+  "name": "optimization"
+}
+```
+
+支持的动作：
+
+| 动作 | 说明 |
+|------|------|
+| `list` | 列出所有已加载的 Skill 和 Jcode 推荐的 Skill |
+| `load <name>` | 加载指定 Skill，返回其完整提示内容（含 `/skill-name` 调用提示） |
+| `reload <name>` | 重新加载指定 Skill（从磁盘刷新） |
+| `reload_all` | 重新加载所有全局 Skill |
+| `read <name>` | 读取 Skill 内容但不激活 |
+
+### 三个内置推荐 Skill
+
+Jcode 内置了三个官方推荐的 Skill，无需安装即可使用：
+
+1. **`/optimization`** — 性能优化专家。帮助定义指标、测量瓶颈、宏观优先。自动注册到记忆系统，Agent 在优化任务中会自动激活。
+2. **`/todo-planning-skill`** — 任务规划助手。创建结构化的待办清单，包含反思、静态分析、验证和下一步更新。
+3. **`/firefox-browser`** — 浏览器控制技能。控制 Firefox 浏览器进行网页浏览、表单填写、截图等操作。
+
+### 从外部导入
+
+首次启动时，如果 `~/.jcode/skills/` 目录不存在，Jcode 会自动从以下位置导入已有 Skill：
+
+- `~/.claude/skills/`（Claude Code）
+- `~/.codex/skills/`（Codex CLI）
+
+### 更多 Skill
+
+Jcode 还推荐来自以下第三方目录的 Skill：
+
+- **Anthropic 官方 Skills**：`npx skills add anthropics/skills --skill <name> --yes`
+- **NVIDIA CUDA-X Skills**：`npx skills add nvidia/skills --skill <name> --yes`
+- 使用 `skill_manage list` 查看所有已安装和推荐的 Skill
+
+### 注意事项
+
+- Skills 区分大小写（斜杠命令和 `name` 字段均区分）
+- 项目级 Skills 修改后立即可见，无需重启 daemon
+- 全局 Skills 修改后需要运行 `skill_manage reload_all` 才能生效
+- Skills 的内容会被注入到 Agent 的上下文中，建议保持简洁
+
+---
 
 ## Swarm 群体协作
 
