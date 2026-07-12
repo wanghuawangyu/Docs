@@ -220,6 +220,10 @@
     - [断线后如何恢复？](#断线后如何恢复)
     - [如何退出 Ambient 模式？](#如何退出-ambient-模式)
     - [如何查看 Ambient 活动？](#如何查看-ambient-活动)
+    - [多行粘贴失效（Windows ConHost）](#多行粘贴失效windows-conhost)
+      - [根因分析](#根因分析)
+      - [解决方案（无需修改 Jcode 源码）](#解决方案无需修改-jcode-源码)
+      - [判断当前终端是否支持 Bracketed Paste](#判断当前终端是否支持-bracketed-paste)
   - [更多资料](#更多资料)
 
 # Jcode 使用指南
@@ -3685,6 +3689,155 @@ jcode ambient stop
 ```bash
 jcode ambient log
 jcode ambient status
+```
+
+### 多行粘贴失效（Windows）
+
+**现象**：在 Jcode TUI 中粘贴多行文本时，字符一个一个出现在终端上，换行后第一行被意外提交，或文本被逐字符插入导致混乱。
+
+即使在 Windows Terminal 下运行 cmd.exe，Ctrl+V 粘贴仍然逐字符出现。
+
+#### 根因分析
+
+**核心结论：问题出在 Windows 控制台输入架构层面，与 Jcode 源码无关。**
+
+正确的粘贴链路（仅 Unix/Linux + 现代终端可行）：
+
+```
+终端模拟器                      → crossterm              → Jcode
+支持 Bracketed Paste              Event::Paste(text)        handle_paste() → 正确
+```
+
+Jcode 源码层面**已经正确实现了所需的一切**：
+
+| 机制 | 位置 | 状态 |
+|:--|:--|:--|
+| 启用 Bracketed Paste | `src/cli/terminal.rs:272` `EnableBracketedPaste` | ✅ |
+| 处理 `Event::Paste` | `src/tui/app/local.rs:387-391` | ✅ |
+| Ctrl+V → 直接读剪贴板 | `src/tui/app/input.rs:187-225` `arboard` 库 | ✅ |
+| 大文本折叠 | `src/tui/app/input.rs:607-613` `[pasted N lines]` | ✅ |
+| 关闭时清理 | `src/cli/terminal.rs:294` `DisableBracketedPaste` | ✅ |
+
+**问题根源：Windows 控制台输入架构的双层机制**
+
+```
+Windows Terminal          → ConHost / ConPTY           → crossterm (Win32 API)
+├── 发送 \e[200~text\e[201~                           
+│   (包装粘贴文本)                                       
+                             └── ReadConsoleInputW 转换
+                                 ├── KEY_EVENT('l') ← 'l'
+                                 ├── KEY_EVENT('i') ← 'i'
+                                 ├── KEY_EVENT('n') ← 'n'
+                                 ├── KEY_EVENT('e') ← 'e'
+                                 ├── KEY_EVENT('1') ← '1'
+                                 └── KEY_EVENT(VK_RETURN) ← '\n'  → Jcode 提交！
+```
+
+Windows 上 crossterm 默认使用 **Win32 Console API**（`ReadConsoleInputW`）读取输入。该 API 将终端发送的 Bracketed Paste 序列 `\e[200~...\e[201~` **逐字符拆解为独立的 KEY_EVENT_RECORD**，其中换行符 `\n` 变成 `VK_RETURN` 击键事件。
+
+Jcode 在 `handle_key_core()`（`input.rs:2310`）中将 `KeyCode::Enter` 识别为提交命令 → **只粘贴了第一行就立刻发送**。
+
+**Ctrl+V 同样被 ConHost 截获**：ConHost 拦截 Ctrl+V 后读取剪贴板，也是逐字符注入为 INPUT_RECORD，Jcode 永远收不到原始的 `Ctrl+Char('v')` 键事件。
+
+**关键对比表**：
+
+| 终端场景 | 粘贴方式 | 中间层转换 | Jcode 看到 | 结果 |
+|:--|:--|:--|:--|:--:|
+| **Unix + 任何终端** | 任何方式 | VT 序列直通 | `Event::Paste(text)` | ✅ |
+| **PowerShell in Windows Terminal** | Ctrl+V | VT 输入模式 → 序列直通 | `Event::Paste(text)` | ✅ |
+| **cmd.exe in Windows Terminal** | Ctrl+V / 右键 | ConHost Win32 → INPUT_RECORD | 逐个 KeyEvent | ❌ |
+| **独立 cmd.exe (ConHost)** | 右键（快速编辑） | ConHost Win32 → INPUT_RECORD | 逐个 KeyEvent + Enter 提交 | ❌ |
+| **独立 cmd.exe (ConHost)** | Ctrl+V | ConHost 截获并逐字符注入 | 逐个 KeyEvent | ❌ |
+
+#### 解决方案（无需修改 Jcode 源码）
+
+**方案一（最推荐）：用 PowerShell 代替 cmd.exe**
+
+PowerShell 自动设置 `ENABLE_VIRTUAL_TERMINAL_INPUT`（VT 输入模式），允许 Bracketed Paste 序列直通到 crossterm。
+
+```powershell
+# 直接在 PowerShell 中运行 Jcode
+jcode
+```
+
+PowerShell 中粘贴自动正常工作，无需任何额外配置。
+
+**方案二：在 Windows Terminal 中修改 cmd.exe 配置文件**
+
+在 Windows Terminal 中为 cmd.exe 启用 VT 输入转发：
+
+1. 打开 Windows Terminal → 设置 (`Ctrl+,`)
+2. 左侧选择 **"命令提示符"** (cmd.exe) 配置文件
+3. 点击 **"高级"**
+4. 确保 **"使用 Win32 输入模式"** 处于**关闭**状态（默认开启，关闭后 VT 序列直通）
+
+> 若找不到此开关，直接编辑 `settings.json`：在 cmd.exe 配置文件中添加
+> ```json
+> "experimental.useInputPassthrough": true
+> ```
+> 或
+> ```json
+> "inputPassthroughMode": "always"
+> ```
+> （具体字段名取决于 WT 版本 1.24+，可在设置 JSON 中搜索"passthrough"）
+
+**方案三：禁用 Windows Terminal 的 Ctrl+V 粘贴拦截**
+
+> ⚠️ 此方案仅当 Jcode 是 Windows Terminal 的**直接启动进程**（如在 WT 中配置启动命令为 `jcode`）时有效。在 cmd.exe 下运行时，ConHost 仍会截获 Ctrl+V。
+
+让 Ctrl+V 原始键事件直接到达 Jcode，由 Jcode 的 `paste_from_clipboard()` 通过 `arboard` 库直接读取剪贴板：
+
+1. 打开 Windows Terminal 设置 → **操作**
+2. 找到 `Ctrl+V` → **粘贴** 绑定
+3. 将其删除或改为其他键（如 `Ctrl+Shift+V`）
+4. 保存
+
+这样 Ctrl+V 键事件直通给 Jcode → `is_clipboard_paste_shortcut()` 匹配 → `paste_from_clipboard()` 直接读剪贴板（含换行符）→ 正确插入全部文本。
+
+**方案四：使用 Python 包装脚本启用 VT 输入模式**
+
+```python
+# launch_jcode.py — 启用 VT 输入模式后启动 Jcode
+import ctypes, subprocess, sys
+from ctypes import wintypes
+
+STD_INPUT_HANDLE = -10
+ENABLE_VIRTUAL_TERMINAL_INPUT = 0x0200
+
+kernel32 = ctypes.windll.kernel32
+handle = kernel32.GetStdHandle(STD_INPUT_HANDLE)
+if handle and handle != wintypes.HANDLE(-1).value:
+    mode = wintypes.DWORD()
+    if kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+        mode.value |= ENABLE_VIRTUAL_TERMINAL_INPUT
+        kernel32.SetConsoleMode(handle, mode)
+
+subprocess.call(['jcode'] + sys.argv[1:])
+```
+
+用法：`python launch_jcode.py` 或编译为 `exe`。
+
+**方案五：使用现代终端（彻底解决）**
+
+这些终端不使用 Windows Console API，完全基于 PTY + VT 序列：
+
+| 终端 | 特点 | 命令 |
+|:--|:--|:--|
+| **Alacritty** | GPU 加速，原生 Bracketed Paste | `winget install alacritty` |
+| **WezTerm** | 功能丰富，跨平台，配置灵活 | `winget install wez.wezterm` |
+| **Cmder** / **ConEmu** | Windows 增强终端 | `winget install cmder` |
+
+**方案六：验证 VT 输入模式是否生效**
+
+```powershell
+# 在 PowerShell 中运行（PowerShell 默认启用 VT 输入模式）
+# 粘贴后看是否出现 200~ 和 201~ 包裹的文本
+$Host.UI.RawUI.ForegroundColor = "Green"
+Write-Host "准备测试，粘贴一段文本..."
+# 启用 bracketed paste
+[Console]::Write("`e[?2004h")
+# 然后粘贴文本
+# 如果看到类似 v200~textv201~ 的标记，VT 输入模式已生效
 ```
 
 ---
