@@ -64,7 +64,6 @@
       - [`[acp]` — ACP（Agent Communication Protocol）](#acp--acpagent-communication-protocol)
       - [`[auth]` — 认证](#auth--认证)
       - [`[autoreview]` / `[autojudge]` — 自动审查/评判](#autoreview--autojudge--自动审查评判)
-    - [MCP 配置（JSON）](#mcp-配置json)
     - [凭据存储（ENV 文件）](#凭据存储env-文件)
     - [其他配置文件（JSON）](#其他配置文件json)
     - [运行时环境变量覆盖](#运行时环境变量覆盖)
@@ -86,6 +85,11 @@
     - [记忆 CLI 命令](#记忆-cli-命令)
     - [记忆存存储位置](#记忆存存储位置)
     - [环境依赖与模型下载](#环境依赖与模型下载)
+  - [MCP 配置（JSON）](#mcp-配置json)
+    - [MCP 是什么](#mcp-是什么)
+    - [MCP 在 Jcode 中的作用](#mcp-在-jcode-中的作用)
+    - [Jcode 推荐的 MCP 使用方式](#jcode-推荐的-mcp-使用方式)
+    - [配置文件位置与优先级](#配置文件位置与优先级)
   - [Swarm 群体协作](#swarm-群体协作)
     - [适用场景](#适用场景)
     - [核心概念](#核心概念)
@@ -1287,32 +1291,6 @@ model_picker_providers = ["openai", "anthropic", "myprofile"]
 |-----|------|--------|--------|
 | `enabled` | 启用该功能 | `false` | `false` |
 
-### MCP 配置（JSON）
-
-MCP 服务器使用 JSON 格式配置：
-
-| 文件 | 作用域 |
-|------|--------|
-| `~/.jcode/mcp.json` | 全局 MCP 服务器 |
-| `.jcode/mcp.json` | 项目级 MCP 服务器 |
-| `~/.claude.json` | Claude Code 兼容 |
-| `.mcp.json` | 仓库根目录（Claude Code 项目配置） |
-| `.claude/mcp.json` | 传统兼容路径 |
-
-```json
-{
-  "mcpServers": {
-    "filesystem": {
-      "command": "/path/to/mcp-server",
-      "args": ["--root", "/workspace"],
-      "env": {},
-      "shared": true
-    }
-  }
-}
-```
-
-首次启动时，如果 `~/.jcode/mcp.json` 不存在，Jcode 会尝试从 `~/.claude.json`、`~/.claude/mcp.json` 和 `~/.codex/config.toml` 导入 MCP 配置。
 
 ### 凭据存储（ENV 文件）
 
@@ -1591,6 +1569,119 @@ memory_embedding_dim = 1536
 要求对应的 API Key 具有 embeddings 权限。远程嵌入的优势是不占用本地 CPU/内存资源，且向量维度可配置。
 
 ---
+
+---
+
+## MCP 配置（JSON）
+
+### MCP 是什么
+
+**MCP（Model Context Protocol，模型上下文协议）** 是 Anthropic 提出的开放协议，用于标准化 LLM 外部工具/资源接入方式。可以理解为 "AI 的 USB-C" —— 让 LLM 应用通过统一接口连接各种外部工具、数据源和服务。
+
+**核心概念：**
+
+| 概念 | 说明 |
+|------|------|
+| **MCP 服务器** | 独立进程，通过 stdio JSON-RPC 2.0 与客户端通信，提供工具（tools）、资源（resources）和提示（prompts） |
+| **MCP 客户端** | 集成在 Jcode 服务器中，管理 MCP 服务器进程的生命周期（启动、通信、热重载、故障恢复） |
+| **共享池（Shared Pool）** | 所有 Jcode 会话共享同一组 MCP 服务器进程（N 会话 × M 服务器 = M 进程而非 N×M），节省系统资源 |
+| **工具注册** | MCP 服务器连接后自动将其工具注册为 `mcp__<server>__<tool>` 格式，Agent 可直接调用 |
+
+### MCP 在 Jcode 中的作用
+
+1. **扩展 Agent 能力** — MCP 服务器提供的工具会像内置工具一样被 Agent 自动发现和使用
+2. **跨会话共享** — 共享池机制保证所有会话共享同一组 MCP 服务器进程
+3. **连接即用** — 配置即插即用，启动 Jcode 时自动连接所有已配置的 MCP 服务器。Agent 可通过 `mcp { action: "list" }` 查看连接状态
+4. **自动恢复** — 断线后自动重连，失败的连接有 30 秒冷却期防止频繁重试
+5. **赞助商标记** — 通过 `discover_tools` 发现的 MCP 工具会被标记来源
+
+### Jcode 推荐的 MCP 使用方式
+
+**扩展开发工具链：**
+
+- **数据库操作** — 让 Agent 直接查询数据库架构、执行只读查询、生成迁移脚本（如 `@modelcontextprotocol/server-postgres`）
+- **项目管理** — 连接 Todoist / Linear / Jira MCP，Agent 可直接查看任务状态、创建 issue
+- **知识库 / 文档** — 连接 Notion / 内部知识库 MCP，Agent 可检索项目文档和 Wiki
+- **GitHub / GitLab** — Agent 可直接创建 PR、review 代码、查看 issue（如 `@modelcontextprotocol/server-github`）
+- **文件系统** — 安全的文件操作沙箱（如 `@modelcontextprotocol/server-filesystem`）
+
+**自定义工具：**
+
+编写自己的 MCP 服务器（任何语言，只需 stdio JSON-RPC 2.0），将团队特有的工具暴露给 Agent。
+
+**推荐配置示例：**
+
+```json
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/workspace"],
+      "env": {},
+      "shared": true
+    },
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": {
+        "GITHUB_TOKEN": "<your-token>"
+      },
+      "shared": true
+    }
+  }
+}
+```
+
+**在 Jcode 中管理 MCP：**
+
+| 命令/动作 | 说明 |
+|----------|------|
+| `mcp { action: "list" }` | 列出所有已连接的 MCP 服务器及其可用工具 |
+| `mcp { action: "connect", server: "filesystem" }` | 手动连接指定服务器 |
+| `mcp { action: "disconnect", server: "filesystem" }` | 断开指定服务器 |
+| `mcp { action: "reload" }` | 重新加载整个 MCP 配置（热重载） |
+| `discover_tools { category: "deployment" }` | 发现可用的赞助商 MCP 工具 |
+| `/restart` | 重启 Jcode，重新初始化所有 MCP 连接 |
+| 调试 socket：`mcp:servers` | 列出配置和连接状态 |
+
+### 配置文件位置与优先级
+
+| 文件 | 作用域 | 优先级 |
+|------|--------|--------|
+| `~/.jcode/mcp.json` | 全局 MCP 服务器 | 基础配置 |
+| `.jcode/mcp.json` | 项目级 MCP 服务器（项目中） | 覆盖全局同名服务器 |
+| `~/.claude.json` | Claude Code 兼容（自动导入） | 首次启动时自动合并 |
+| `.mcp.json` | 仓库根目录（Claude Code 项目配置） | 自动检测 |
+| `.claude/mcp.json` | 传统兼容路径 | 自动检测 |
+
+项目级 `.jcode/mcp.json` 中的服务器会合并/覆盖全局配置中同名服务器。其他兼容路径中的配置仅在首次启动时自动导入到 `~/.jcode/mcp.json`。
+
+```json
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "/path/to/mcp-server",
+      "args": ["--root", "/workspace"],
+      "env": {},
+      "shared": true
+    }
+  }
+}
+```
+
+**配置字段说明：**
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `command` | string | 是 | 可执行命令（程序路径、`npx`、`uvx` 等） |
+| `args` | string[] | 否 | 命令行参数 |
+| `env` | object | 否 | 环境变量。避免硬编码敏感值——在 `~/.config/jcode/` 下的 ENV 文件中设置 |
+| `shared` | boolean | 否 | 是否共享服务器进程（默认 `true`，推荐保持） |
+| `disabled` | boolean | 否 | 是否禁用此服务器（`true` 时跳过连接，保留配置） |
+
+> **注意：** Jcode 目前只支持 stdio 协议的 MCP 服务器（通过 `command` + `args` 启动子进程）。HTTP/SSE 传输协议尚未支持。
+>
+> 首次启动时，如果 `~/.jcode/mcp.json` 不存在，Jcode 会尝试从 `~/.claude.json`、`~/.claude/mcp.json` 和 `~/.codex/config.toml` 导入 MCP 配置。
 
 ## Swarm 群体协作
 
