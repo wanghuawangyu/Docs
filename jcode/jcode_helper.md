@@ -89,12 +89,20 @@
     - [思维链（CoT）vs 思维树（ToT）](#思维链cotvs-思维树tot)
     - [ReAct 框架（Reasoning + Acting）](#react-框架reasoning--acting)
   - [检索增强生成（RAG）](#检索增强生成rag)
+    - [外部知识库集成](#外部知识库集成)
+      - [支持的外部知识库类型](#支持的外部知识库类型)
+      - [方法一：MCP 知识库服务器（推荐）](#方法一mcp-知识库服务器推荐)
+      - [方法二：使用 `webfetch` + `websearch` 作为临时知识源](#方法二使用-webfetch--websearch-作为临时知识源)
+      - [方法三：自定义 MCP 知识库服务器（最灵活）](#方法三自定义-mcp-知识库服务器最灵活)
+      - [MCP 知识库的生命周期](#mcp-知识库的生命周期)
+      - [使用方式](#使用方式)
     - [RAG 架构总览](#rag-架构总览)
     - [自动 RAG（核心功能）](#自动-rag核心功能)
     - [手动 RAG 检索](#手动-rag-检索)
     - [知识库构建](#知识库构建)
+    - [Agent 如何利用 RAG](#agent-如何利用-rag)
     - [其他检索源](#其他检索源)
-    - [配置选项](#配置选项-1)
+    - [配置选项](#配置选项)
   - [记忆系统](#记忆系统)
     - [工作原理](#工作原理)
     - [记忆工具](#记忆工具)
@@ -1680,6 +1688,173 @@ system_prompt_additions = """
 ## 检索增强生成（RAG）
 
 **Jcode 内置了完整的 RAG（Retrieval-Augmented Generation）管道，核心载体就是其记忆系统（Memory System）。** 每次对话轮次中，Jcode 自动检索相关记忆信息并注入到模型上下文中，让模型在生成回答时拥有可靠的"外部知识"参考。
+
+### 外部知识库集成
+
+除了内置的记忆系统，Jcode 支持通过 **MCP 协议** 连接外部知识库。这种方式适合使用团队文档、企业 Wiki、第三方知识管理工具中的内容。
+
+#### 支持的外部知识库类型
+
+| 类型 | 连接方式 | 使用场景 |
+|------|---------|---------|
+| **文件目录** | MCP Filesystem | 将本地或远程文档目录作为知识库，Agent 可直接读取 |
+| **Notion / 飞书文档** | MCP 服务器 | 连接文档协作平台，按需检索项目文档 |
+| **Confluence / Wiki** | MCP 服务器 | 连接企业内部 Wiki，读取技术文档和规范 |
+| **向量数据库** | MCP 服务器 | 连接 Chroma / Pinecone / Qdrant 等，自定义语义检索 |
+| **知识图谱** | MCP 服务器 | 连接知识图谱数据库，适合复杂关系查询 |
+| **数据库** | MCP 服务器 | 连接 PostgreSQL / MySQL 等，将数据库作为知识源 |
+| **GitHub / GitLab** | MCP 服务器 | 将代码仓库、Issue、Wiki 作为知识源 |
+| **Web 页面** | `webfetch` / `browser` | 按需抓取网页内容作为临时知识参考 |
+
+#### 方法一：MCP 知识库服务器（推荐）
+
+通过 MCP 连接专用知识库服务器，Agent 自动发现其提供的检索工具。
+
+**示例配置：连接文件目录作为知识库**
+
+```json
+{
+  "mcpServers": {
+    "kb-filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/your/knowledge-base"],
+      "shared": true
+    }
+  }
+}
+```
+
+配置后，Agent 会自动获得 `mcp__kb-filesystem__read_file` 等工具，可以搜索和读取知识库目录中的文档。
+
+**示例配置：连接向量数据库（Chroma / Pinecone / Qdrant）**
+
+```json
+{
+  "mcpServers": {
+    "kb-vector": {
+      "command": "python",
+      "args": ["/path/to/vector-mcp-server/main.py"],
+      "env": {
+        "CHROMA_HOST": "localhost",
+        "CHROMA_PORT": "8000",
+        "COLLECTION_NAME": "project-knowledge"
+      },
+      "shared": true
+    }
+  }
+}
+```
+
+> 向量数据库 MCP 服务器需自行实现或使用社区包（`pypi` 搜索 `mcp-server-chroma` 等）。基本原理：通过 MCP 暴露 `search_knowledge(query, top_k)` 工具，内部执行语义检索后返回结果。
+
+**示例配置：连接 Notion 知识库**
+
+```json
+{
+  "mcpServers": {
+    "kb-notion": {
+      "command": "npx",
+      "args": ["-y", "@notionhq/notion-mcp-server"],
+      "env": {
+        "NOTION_API_KEY": "ntn_xxxxxxxx"
+      },
+      "shared": true
+    }
+  }
+}
+```
+
+#### 方法二：使用 `webfetch` + `websearch` 作为临时知识源
+
+对于不需要长期连接的 Web 源码，可以直接让 Agent 按需抓取：
+
+```
+"帮我阅读 https://docs.example.com/api/reference 的内容，然后基于这份文档分析我们的实现是否正确。"
+```
+
+#### 方法三：自定义 MCP 知识库服务器（最灵活）
+
+编写自己的 MCP 服务器程序（Python / Node.js / Rust 等均可），暴露搜索和读取工具。
+
+```python
+# 示例：简单的知识库 MCP 服务器（Python）
+import json
+import sys
+from typing import Any
+
+def handle_request(request: dict) -> dict:
+    method = request.get("method")
+    
+    if method == "tools/list":
+        return {
+            "tools": [{
+                "name": "search_knowledge",
+                "description": "搜索内部知识库",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "搜索关键词"},
+                        "top_k": {"type": "number", "default": 5}
+                    },
+                    "required": ["query"]
+                }
+            }]
+        }
+    
+    if method == "tools/call":
+        tool = request["params"]["name"]
+        args = request["params"]["arguments"]
+        
+        if tool == "search_knowledge":
+            results = your_kb_search(args["query"], args.get("top_k", 5))
+            return {"content": [{"type": "text", "text": json.dumps(results)}]}
+    
+    return {}
+
+for line in sys.stdin:
+    request = json.loads(line)
+    response = handle_request(request)
+    sys.stdout.write(json.dumps(response) + "\n")
+    sys.stdout.flush()
+```
+
+配置方式：
+```json
+{
+  "mcpServers": {
+    "kb-custom": {
+      "command": "python",
+      "args": ["/path/to/kb_mcp_server.py"],
+      "env": {},
+      "shared": true
+    }
+  }
+}
+```
+
+#### MCP 知识库的生命周期
+
+```
+启动 Jcode → 自动连接 MCP 服务器 → 服务器暴露工具
+                                         ↓
+Agent 在 ReAct 循环中 ─→ 调用搜索工具 ─→ 获取知识库结果
+    ↑                                        │
+    └────────────── 作为上下文参考 ────────────┘
+```
+
+- MCP 服务器断线后自动重连（30 秒冷却期）
+- 可通过 `mcp { action: "list" }` 检查连接状态
+- 修改配置后可用 `/restart` 或 `mcp { action: "reload" }` 热重载
+
+#### 使用方式
+
+配置好 MCP 知识库后，Agent 会自动发现并使用其工具。你也可以在消息中明确指示：
+
+```
+"搜索知识库中关于数据库设计的文档，然后参考它来设计新模块的表结构。"
+```
+
+---
 
 ### RAG 架构总览
 
