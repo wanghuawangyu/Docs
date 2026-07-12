@@ -119,6 +119,48 @@
     - [方法六：上下文预算配置](#方法六上下文预算配置)
     - [方法七：多会话策略](#方法七多会话策略)
     - [方法总结决策表](#方法总结决策表)
+  - [任务自动化：从"助手"到"执行者"](#任务自动化从助手到执行者)
+    - [总体架构](#总体架构)
+    - [机制一：Initiative（目标管理）— 自主规划的起点](#机制一initiative目标管理-自主规划的起点)
+      - [创建目标](#创建目标)
+      - [查看和管理目标](#查看和管理目标)
+      - [Agent 驱动的目标循环](#agent-驱动的目标循环)
+    - [机制二：Subagent（子代理）— 委派执行](#机制二subagent子代理-委派执行)
+    - [机制三：Swarm（群体协作）— 复杂任务并行分解](#机制三swarm群体协作-复杂任务并行分解)
+      - [Swarm 的自主规划能力](#swarm-的自主规划能力)
+      - [启动 Swarm 的几种方式](#启动-swarm-的几种方式)
+      - [任务图（Task Graph）](#任务图task-graph)
+      - [自动生成任务图](#自动生成任务图)
+      - [Swarm 的自主模式](#swarm-的自主模式)
+    - [机制四：Ambient（后台自主运行）— 无需值守的自动化](#机制四ambient后台自主运行-无需值守的自动化)
+      - [启用 Ambient](#启用-ambient)
+      - [Ambient 的工作循环](#ambient-的工作循环)
+      - [安全审批系统](#安全审批系统)
+      - [定时任务](#定时任务)
+    - [机制五：组合拳 — 完整的自主执行流水线](#机制五组合拳--完整的自主执行流水线)
+      - [流水线步骤](#流水线步骤)
+      - [完整示例](#完整示例)
+    - [实战决策矩阵](#实战决策矩阵)
+    - [配置建议](#配置建议)
+  - [AI 任务路由：根据任务类型选择最优工具和协作模式](#ai-任务路由根据任务类型选择最优工具和协作模式)
+    - [核心理念：不要用锤子切菜](#核心理念不要用锤子切菜)
+    - [Jcode 内置的智能路由机制](#jcode-内置的智能路由机制)
+      - [1. 模型级别路由（swarm-prompt.md）](#1-模型级别路由swarm-promptmd)
+      - [2. Effort 级别路由（投入程度）](#2-effort-级别路由投入程度)
+      - [3. 工具级别路由（选择正确的工具组合）](#3-工具级别路由选择正确的工具组合)
+      - [4. 协作模式路由（单人/并行/后台）](#4-协作模式路由单人并行后台)
+    - [10 倍效率工作流模板](#10-倍效率工作流模板)
+      - [模板 1：Bug 修复工作流](#模板-1bug-修复工作流)
+      - [模板 2：新功能开发工作流](#模板-2新功能开发工作流)
+      - [模板 3：代码审查工作流](#模板-3代码审查工作流)
+      - [模板 4：技术调研工作流](#模板-4技术调研工作流)
+      - [模板 5：批量重构工作流](#模板-5批量重构工作流)
+    - [任务路由实战决策表](#任务路由实战决策表)
+    - [配置你的路由系统](#配置你的路由系统)
+      - [自定义 swarm-prompt.md](#自定义-swarm-promptmd)
+      - [Jcode 全局配置](#jcode-全局配置)
+    - ["10 倍效率"的核心原则](#10-倍效率的核心原则)
+    - [一句话总结](#一句话总结)
   - [记忆系统](#记忆系统)
     - [工作原理](#工作原理)
     - [记忆工具](#记忆工具)
@@ -2230,6 +2272,748 @@ jcode  # 新会话
 | 项目上下文太长需要多个会话分担 | 多会话 + 记忆系统回流 |
 
 > **简单总结：** Jcode 的上下文管理 = **自动压缩**（三个模式，默认 Reactive） + **手动命令**（/compact、/rewind、/fix、/btw） + **会话生命周期**（/save、--resume、/fork）。日常使用中你几乎不需要手动干预——自动压缩在后台持续工作。当需要精细控制时，上面的工具链能给你全栈能力。
+
+---
+
+
+## 任务自动化：从"助手"到"执行者"
+
+Jcode 提供了从"提问回答的助手"到"自主规划执行的智能体"的全链路能力。通过组合 **Initiatives（目标管理）**、**Swarm（群体协作）**、**Ambient（后台自主）**、**Subagent（子代理）** 四大核心机制，可以让 Jcode 自主规划任务、调用工具、完成复杂目标。
+
+```
+传统模式:  你提问 → AI 回答 → 你再提问 → AI 再回答
+                      ↓
+自主模式:  你设定目标 → AI 自主规划 → 分解任务 → 执行 → 检查进度 → 调整 → 完成
+```
+
+### 总体架构
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                   自主执行体系                              │
+│                                                           │
+│  ┌──────────┐   ┌───────────┐   ┌──────────────┐       │
+│  │ 目标管理  │──→│ 任务执行  │──→│ 后台自主运行  │       │
+│  │          │   │           │   │              │       │
+│  │ • 创建目标 │   │ • Swarm  │   │ • Ambient    │       │
+│  │ • 分解为   │   │ • 任务图  │   │ • 定时任务   │       │
+│  │   里程碑  │   │ • 子Agent │   │ • 安全审批   │       │
+│  │ • 追踪进度 │   │ • 并行执行│   │ • 自适应间隔 │       │
+│  │ • 检查点  │   │ • 报告汇总│   │ • 休眠恢复   │       │
+│  └────┬─────┘   └─────┬─────┘   └──────┬───────┘       │
+│       │               │                │                │
+│       └───────────────┼────────────────┘                │
+│                       ▼                                  │
+│              ┌──────────────┐                            │
+│              │  安全系统     │                            │
+│              │  (权限审批)   │                            │
+│              └──────────────┘                            │
+└────────────────
+```
+
+### 机制一：Initiative（目标管理）— 自主规划的起点
+
+**Initiative（目标/倡议）** 是让 Jcode 从"被动回答"升级为"主动执行"的第一步。它相当于给 Agent 一个**长期任务书**，包含目标描述、为什么做这个、成功标准、里程碑计划。
+
+#### 创建目标
+
+Agent 可以自主使用 `initiative` 工具创建和管理目标。你也可以在对话中直接描述目标，Agent 会自动将其转化为 Initiative。
+
+```
+# 方式一：直接在消息中描述目标
+"帮我创建一个 Initiative：重构支付模块，支持多币种交易。
+为什么做：现有模块只支持 USD，国际化需求增加
+成功标准：
+- USD、EUR、JPY 三种币种支持
+- 汇率自动转换
+- 所有现有测试通过
+里程碑：
+1. 设计 PaymentGateway trait 接口
+2. 实现 USD 渠道（现有代码重构成 trait）
+3. 实现 EUR 和 JPY 渠道
+4. 集成汇率服务
+5. 编写测试并验证"
+```
+
+Agent 会自动调用 `initiative` 工具创建结构化目标。也可以手动用工具：
+
+```
+initiative {
+  action: "create",
+  title: "重构支付模块，支持多币种",
+  description: "将现有支付模块重构为多币种架构",
+  why: "国际化需求增加，现有模块只支持 USD",
+  success_criteria: ["USD/EUR/JPY 支持", "汇率自动转换", "测试通过"],
+  milestones: [
+    { id: "m1", title: "设计接口", steps: [{ id: "s1", content: "设计 PaymentGateway trait" }] },
+    { id: "m2", title: "USD 渠道", steps: [{ id: "s2", content: "重写现有代码" }] },
+    { id: "m3", title: "EUR/JPY 渠道" },
+    { id: "m4", title: "测试验证" }
+  ],
+  scope: "project"
+}
+```
+
+#### 查看和管理目标
+
+```
+# 列出所有目标
+initiative { action: "list" }
+
+# 查看目标详情
+initiative { action: "show", id: "goal_abc123" }
+
+# 恢复目标到当前会话（Agent 会继续推进）
+initiative { action: "resume" }
+
+# 更新目标进度
+initiative {
+  action: "update",
+  id: "goal_abc123",
+  progress_percent: 60,
+  current_milestone_id: "m3",
+  next_steps: ["实现 JPY 渠道", "集成汇率 API"]
+}
+
+# 打检查点（记录当前进展快照）
+initiative {
+  action: "checkpoint",
+  id: "goal_abc123",
+  checkpoint_summary: "PaymentGateway trait 已完成，USD/EUR 测试通过"
+}
+
+# 聚焦到某个目标（在侧边栏打开详情）
+initiative { action: "focus", id: "goal_abc123" }
+```
+
+#### Agent 驱动的目标循环
+
+```
+设定目标 → 分解里程碑 → 开始执行里程碑 → 完成 → 更新进度
+    ↑                                       │
+    └────────────── 下一个里程碑 ──────────────┘
+```
+
+Agent 在每轮对话中会自动检查当前是否有活跃的 Initiative。如果有，它会主动推进里程碑，而不是等着你告诉它下一步做什么。
+
+### 机制二：Subagent（子代理）— 委派执行
+
+**Subagent** 是从当前对话中"分裂"出一个独立的 Agent 去执行任务。它拥有自己的上下文和工具集，完成后报告结果回来。
+
+```
+# 方式一：在当前对话中直接要求
+"用子Agent帮我调研一下 Rust 的异步流处理库有哪些"
+
+# 方式二：明确使用 subagent 工具
+subagent {
+  prompt: "调研 Rust 异步流处理库（tokio-stream、async-stream 等），比较优缺点和使用场景",
+  subagent_type: "agent"
+}
+# 返回结果后，子 Agent 销毁，结果注入当前上下文
+```
+
+Subagent 的典型用法：
+
+| 场景 | 示例 |
+|------|------|
+| **调研/研究** | "用子Agent搜索这篇论文的背景和相关工作" |
+| **并行验证** | "子Agent A 跑测试，子Agent B 检查代码风格，然后汇总结果" |
+| **隔离执行** | "用子Agent在一个新的工作目录尝试这个方案，如果可行就告诉我步骤" |
+| **深度排查** | "用子Agent分析服务器日志，找出 500 错误的原因" |
+
+### 机制三：Swarm（群体协作）— 复杂任务并行分解
+
+**Swarm** 是 Jcode 的多 Agent 协作框架。它允许 Agent 将复杂目标分解为多个子任务，分配给独立的 Agent 并行执行，然后汇总结果。
+
+#### Swarm 的自主规划能力
+
+Swarm 的核心能力是 **自动规划 + 自动分解 + 自动分配 + 自动汇总**：
+
+```
+你：用 Swarm 重构支付模块
+         │
+         ▼
+Swarm Coordinator ─── 分析目标 → 分解任务 → 建任务图
+         │
+         ├── Agent A: 设计 PaymentGateway trait
+         ├── Agent B: 实现 USD 渠道
+         ├── Agent C: 实现 EUR 渠道
+         ├── Agent D: 编写测试
+         │
+         ▼
+         汇总 → 检查冲突 → 输出结果 → 更新 Initiative
+```
+
+#### 启动 Swarm 的几种方式
+
+**方式一：让当前 Agent 自动启动 Swarm**
+
+```
+"启动 Swarm 来完成支付模块重构"
+```
+
+当前 Agent 会自动成为协调者（Coordinator），分解任务并分配。
+
+**方式二：使用 `/swarm` 命令**
+
+```
+/swarm on          # 开启 Swarm 模式
+/swarm status      # 查看 Swarm 状态
+/swarm off         # 关闭 Swarm
+```
+
+**方式三：使用 `swarm` 工具手动创建子 Agent**
+
+```
+swarm {
+  action: "spawn",
+  prompt: "调研并设计 PaymentGateway trait 接口，完成后报告接口定义和设计理由",
+  label: "接口设计师"
+}
+```
+
+#### 任务图（Task Graph）
+
+复杂任务会形成有向无环图（DAG），Swarm 自动识别依赖关系并行执行：
+
+```
+       ┌─────────────────────┐
+       │ 设计 PaymentGateway  │  ← 没有依赖，立即执行
+       └──────────┬──────────┘
+                  │
+     ┌────────────┼────────────┐
+     ▼            ▼            ▼
+ ┌────────┐  ┌────────┐  ┌──────────┐
+ │ USD    │  │ EUR    │  │ JPY      │  ← 并行执行（互不依赖）
+ │ 渠道   │  │ 渠道   │  │ 渠道     │
+ └────┬───┘  └────┬───┘  └────┬─────┘
+     │            │            │
+     └────────────┼────────────┘
+                  ▼
+           ┌────────────┐
+           │ 集成测试    │  ← 依赖所有渠道完成
+           └────────────┘
+```
+
+#### 自动生成任务图
+
+```
+# 用任务图方式分解复杂工作
+swarm {
+  action: "expand_node",
+  node_id: "payment-refactor",
+  nodes: [
+    { id: "design", content: "设计接口", kind: "explore", depends_on: [] },
+    { id: "usd", content: "USD 渠道实现", kind: "implement", depends_on: ["design"] },
+    { id: "eur", content: "EUR 渠道实现", kind: "implement", depends_on: ["design"] },
+    { id: "test", content: "集成测试", kind: "verify", depends_on: ["usd", "eur"] }
+  ]
+}
+```
+
+#### Swarm 的自主模式
+
+```
+# 让 Swarm 全自动执行计划
+swarm { action: "run_plan", mode: "deep" }
+
+# 填满所有空闲 Agent 并行推进
+swarm { action: "fill_slots", concurrency_limit: 5 }
+```
+
+### 机制四：Ambient（后台自主运行）— 无需值守的自动化
+
+**Ambient** 是 Jcode 的**后台自主运行**模式。Agent 在后台独立运行，无需你一直在终端前。它会在设定的间隔自动执行任务。
+
+```
+┌──────────────┐     ┌─────────────────────┐     ┌──────────────┐
+│  你关闭终端   │────→│ Ambient 后台 Agent   │────→│ 醒来查看结果   │
+│  去做其他事   │     │ 自主工作、自我循环     │     │              │
+│              │     │ • 读取 Initiative    │     │              │
+└──────────────┘     │ • 推进里程碑         │     └──────────────┘
+                      │ • 遇到问题暂停等待    │
+                      │ • 需要审批时通知你    │
+                      └─────────────────────┘
+```
+
+#### 启用 Ambient
+
+```toml
+[ambient]
+# 开启 Ambient 模式
+enabled = true
+
+# 自主工作间隔（分钟）
+min_interval_minutes = 5
+max_interval_minutes = 120
+
+# 用户活跃时暂停，避免打扰
+pause_on_active_session = true
+
+# 允许自主发起任务
+proactive_work = true
+
+# 工作分支前缀
+work_branch_prefix = "ambient/"
+```
+
+#### Ambient 的工作循环
+
+```
+Ambient 启动 → 每 N 分钟唤醒一次
+    │
+    ├─ 检查当前 Initiative → 有 → 执行下一步
+    │                          │
+    │                          ├─ 完成 → 更新进度、打检查点
+    │                          ├─ 需要帮助 → 暂停、通知用户
+    │                          └─ 被阻止 → 记录阻塞原因、等待
+    │
+    ├─ 检查定时任务 → 有 → 执行
+    │
+    ├─ 后台整理 → 去重记忆、清理缓存
+    │
+    └─ 无任务 → 休眠等待
+```
+
+#### 安全审批系统
+
+Ambient 模式下，Agent 可以执行大多数任务，但**高风险操作需要你的审批**：
+
+| 风险等级 | 示例 | 行为 |
+|---------|------|------|
+| **安全** | 读取文件、搜索代码、查询数据库 | Agent 自主执行 |
+| **需审批** | 修改文件、运行命令、安装依赖 | 暂停，通知你审批 |
+| **高风险** | 删除文件、修改配置文件、部署 | 严格审批流程 |
+
+```
+# 查看待审批请求
+jcode safety list
+
+# 审批通过
+jcode safety approve <request-id>
+
+# 拒绝
+jcode safety deny <request-id>
+```
+
+#### 定时任务
+
+Ambient 支持定时任务调度：
+
+```
+# 安排一个计划任务
+schedule {
+  action: "create",
+  task: "检查 CI 构建状态并报告结果",
+  wake_at: "2026-07-13T09:00:00Z"
+}
+```
+
+### 机制五：组合拳 — 完整的自主执行流水线
+
+将上述机制组合起来，形成完整的"设定目标 → 分解 → 执行 → 汇报"流水线：
+
+#### 流水线步骤
+
+| 步骤 | 做了什么 | 使用的机制 |
+|------|---------|-----------|
+| **1. 设定目标** | 你描述目标，Agent 创建 Initiative | `initiative create` |
+| **2. 分解任务** | Agent 分析目标，拆分为里程碑和子任务 | `initiative` |
+| **3. 规划并行** | Agent 判断可并行部分，建立任务图 | `swarm` task_graph |
+| **4. 执行分配** | Swarm 分配子任务给多个 Agent 并行执行 | `swarm spawn` / `fill_slots` |
+| **5. 执行监控** | Agent 推进里程碑，遇到问题自动处理或暂停等待 | `ambient` + `safety` |
+| **6. 汇总验证** | 并行结果汇总，验证一致性 | `swarm complete_node` |
+| **7. 打检查点** | 推进 Initiative 进度，记录完成状态 | `initiative checkpoint` |
+| **8. 后台持续** | Ambient 继续推进后续里程碑 | `ambient` |
+| **9. 完成通知** | 所有里程碑完成，通知你验收 | `notifications` |
+
+#### 完整示例
+
+以下是一次完整的自主执行会话示例：
+
+```
+你：帮我重构支付模块，支持多币种。用 Swarm 做，完成后通知我。
+
+   Agent 响应：
+   │ ✓ 已创建 Initiative: 支付模块多币种重构
+   │ ✓ 已分解为 5 个里程碑
+   │ ✓ 已建立任务图，3 条并行路径
+   │ ✓ Swarm 启动，3 个 Agent 并行工作中
+   │
+   │ [Swarm Agent A] 设计 PaymentGateway trait → 完成
+   │ [Swarm Agent B] USD 渠道实现 → 完成
+   │ [Swarm Agent C] 研究汇率 API → 完成
+   │ [Swarm] 验证接口一致性 → 通过
+   │
+   │ [+] 里程碑 1/5 完成 (设计接口)
+   │ [+] 里程碑 2/5 完成 (USD 渠道)
+   │ [Ambient] 剩余 3 个里程碑转入后台执行
+   │ [Ambient] 完成后会通知你
+   │
+
+   ... 你关掉终端去做其他事 ...
+
+   ── Ambient 自主工作 ──
+   │ [12:30] EUR 渠道实现 → 需要选择汇率 API，暂停等待你决定
+   │
+
+   你回来看到通知：
+   "EUR 渠道需要你决定使用哪家汇率 API。建议选项：
+   A. exchangerate-api.com (免费版 1500次/月)
+   B. Open Exchange Rates (付费 $10/月)
+   C. 自定义爬取央行数据"
+
+   你回复：选 A
+
+   │ [Ambient] 收到指示，使用 exchangerate-api.com
+   │ [Ambient] EUR 渠道实现 → 完成
+   │ [Ambient] JPY 渠道实现 → 完成
+   │ [Ambient] 集成测试 → 通过 ✓
+   │ [Ambient] 所有里程碑完成!
+
+   ── 通知 ──
+   "支付模块多币种重构已完成！总结：
+   • PaymentGateway trait 定义在 src/payment/gateway.rs
+   • USD/EUR/JPY 三种渠道全部实现
+   • 通过 exchangerate-api.com 自动获取汇率
+   • 测试覆盖率 92%，全部通过
+   需要我做 code review 或清理吗？"
+```
+
+### 实战决策矩阵
+
+| 你的目标 | 推荐方案 | 适合场景 |
+|---------|---------|---------|
+| **"帮我完成这个功能"** | Initiative + 当前会话 | 单步完成任务，无需后台 |
+| **"调研几个方案"** | Subagent | 快速并行调研 |
+| **"重构这个大模块"** | Initiative + Swarm | 大型任务分解并行 |
+| **"每天自动检查 CI"** | Ambient + Schedule | 后台定时任务 |
+| **"这个项目你来负责"** | Initiative + Swarm + Ambient | 全权委托给 Jcode |
+| **"分析日志定位 Bug"** | Subagent | 隔离执行不污染主上下文 |
+| **"多方案对比验证"** | Swarm + fork | 分叉并行评估 |
+| **"自动化流水线"** | Ambient + Schedule + Safety | 无人值守的自动化执行 |
+
+### 配置建议
+
+```toml
+[agents]
+# 允许 Agent 主动使用 initiative 工具
+enable_initiatives = true
+
+# 允许 Swarm 自动扩展 Agent 数量
+swarm_enabled = true
+swarm_model = "gpt-5.5"
+
+[ambient]
+# 启用后台自主运行
+enabled = true
+min_interval_minutes = 15
+proactive_work = true
+
+[safety]
+# 允许 Ambient 在需要时暂停等待你的输入
+# 安全审批确保高风险操作有你确认
+```
+
+> **简单总结：** 从"助手"到"执行者" = **Initiative（目标书）** + **Swarm（分解并行）** + **Ambient（后台执行）** + **Subagent（委派调研）**。你设定目标，Jcode 自主规划、分解、执行、汇报。中途遇到需要决策的问题时暂停通知你，其他时间全自动推进。
+
+
+---
+
+## AI 任务路由：根据任务类型选择最优工具和协作模式
+
+实现"10 倍效率提升"的核心不是让 AI 做更快的回答，而是 **让 AI 根据任务类型自动选择最合适的模型、工具和协作模式**。Jcode 本身就是这个"智能路由"的枢纽。
+
+### 核心理念：不要用锤子切菜
+
+不同的任务类型需要不同的 AI 能力配置：
+
+```
+┌────────────────────────────────────────────────────────────┐
+│                  任务类型 → 最优路由                            │
+│                                                              │
+│  代码实现  ──→  低成本模型 + 轻量工具 + 当前上下文               │
+│  架构设计  ──→  强推理模型 + 调研工具 + Swarm 并行方案            │
+│  调试排查  ──→  强推理模型 + 搜索工具 + 隔离 Subagent            │
+│  批量重构  ──→  中等模型 + 任务图 + Ambient 后台执行             │
+│  日常研究  ──→  快速搜索 + 摘要模型 + 一次性子 Agent              │
+│  综合大项目 ──→  Initiative + Swarm Deep + Ambient              │
+└────────────────────────────────────────────────────────────┘
+```
+
+### Jcode 内置的智能路由机制
+
+Jcode 通过以下层次实现智能路由：
+
+#### 1. 模型级别路由（swarm-prompt.md）
+
+Jcode 的 `swarm-prompt.md` 文件定义了 Spawn 子 Agent 时的**模型选择策略**：
+
+```markdown
+# Model routing guidance for spawned swarm agents.
+
+- **默认模型**: claude-api:claude-fable-5
+- **代码实现任务**: gpt-5.5 + effort:"low"
+- **设计、调研、调试、审查**: claude-api:claude-fable-5
+- **批量读取、摘要、上下文获取**: gpt-5.5 + effort:"none"
+```
+
+**配置方式：**
+
+| 位置 | 说明 |
+|------|------|
+| `~/.jcode/swarm-prompt.md` | 全局路由配置（所有项目生效） |
+| `.jcode/swarm-prompt.md` | 项目级路由配置（覆盖全局） |
+| 运行时 `swarm list_models` | 查看当前可用模型和路由 |
+
+**自定义示例：**
+
+```markdown
+- 代码审查任务：`claude-api:claude-fable-5`
+- 前端样式修改：`gpt-5.5` + `effort: "none"`
+- 数据库迁移脚本：`gpt-5.5` + `effort: "low"`
+- 安全审计：`claude-api:claude-fable-5` + `effort: "high"`
+- Rust unsafe 代码审查：`claude-api:claude-fable-5` + `effort: "xhigh"`
+```
+
+#### 2. Effort 级别路由（投入程度）
+
+Jcode 定义了 7 个 effort 等级，控制 Agent 的推理深度和工具使用策略：
+
+| 等级 | 含义 | 适用场景 | 成本 |
+|------|------|---------|------|
+| `none` | 不做推理，直接回答 | 批量读取、格式化、翻译 | 最低 |
+| `low` | 轻量推理 | 简单代码实现、已知方案 | 低 |
+| `medium` | 中等推理 | 多数日常任务 | 中 |
+| `high` | 深度推理 | 复杂 Bug、设计决策 | 高 |
+| `xhigh` | 极限推理 | 安全审计、关键架构 | 最高 |
+| `swarm` | 启用 Swarm 并行 | 可并行的中等任务 | 高 |
+| `swarm-deep` | 启用深度任务图 | 大型、高风险、需覆盖全面的任务 | 最高 |
+
+**使用方式：**
+
+```
+# 在工具调用中指定 effort
+subagent {
+  prompt: "检查这个函数的内存安全性",
+  subagent_type: "agent",
+  effort: "xhigh"
+}
+
+# Spawn 子 Agent 时指定
+swarm {
+  action: "spawn",
+  prompt: "实现用户认证模块",
+  model: "gpt-5.5",
+  effort: "low"
+}
+
+# 全局默认 effort 在配置中设置
+[agent]
+default_effort = "medium"
+```
+
+#### 3. 工具级别路由（选择正确的工具组合）
+
+不同任务类型应使用不同的工具集。Jcode 的工具系统分为几大类：
+
+| 任务类型 | 核心工具集 | 推荐模式 |
+|---------|-----------|---------|
+| **代码编写** | `edit`, `write`, `read`, `bash(cargo check)` | 直接对话 |
+| **代码审查** | `read`, `agentgrep`, `bash`, `swarm`(并行审查) | Swarm Light |
+| **调试排查** | `bash`, `agentgrep`, `webfetch`, `subagent` | Subagent |
+| **架构设计** | `read`, `agentgrep`, `swarm`(多方案对比), `initiative` | Swarm Deep |
+| **批量重构** | `edit`, `multiedit`, `bash`, `initiative`, `ambient` | Ambient |
+| **调研学习** | `websearch`, `webfetch`, `subagent`, `browser` | Subagent |
+| **文档写作** | `edit`, `read`, `open` | 直接对话 |
+| **运维操作** | `bash`, `schedule`, `safety`审批 | Ambient |
+
+#### 4. 协作模式路由（单人/并行/后台）
+
+```
+                          ┌─ 简单任务 → 当前 Agent 直接完成
+                          │
+    任务复杂度分析 ────────┼─ 中等任务 → Subagent 委派
+    工具数量估算            │
+    依赖关系识别            ├─ 复杂任务 → Swarm 分解并行
+                          │
+                          ├─ 大型项目 → Initiative + Swarm + Ambient
+                          │
+                          └─ 定时任务 → Schedule + Ambient
+```
+
+### 10 倍效率工作流模板
+
+以下是一组针对常见场景的**可复用工作流模板**：
+
+#### 模板 1：Bug 修复工作流
+
+```
+原始模式:  手动复现 → 猜原因 → 改代码 → 测试 → 重复 x 3 → 50 分钟
+10x 模式:  AI 分析 → 定位 → 修复 → 验证 → 10 分钟
+
+# 一句话启动
+"/bug 支付模块偶发 500 错误"
+```
+
+Agent 自动执行的工作流：
+1. Agent 自动提升 effort 到 `high`（调试需要深度推理）
+2. 搜索日志 + 代码 grep 定位错误位置
+3. 分析调用链，找到根因
+4. 提出修复方案，等你确认
+5. 确认后自动改代码并跑测试
+6. 打 Initiative checkpoint 记录修复
+
+#### 模板 2：新功能开发工作流
+
+```
+原始模式:  理解需求 → 设计 → 编码 → 测试 → 改 Bug → 30 小时
+10x 模式:  AI 理解需求 → 出设计方案 → 并行编码 → 自动测试 → 6 小时
+
+# 一句话启动
+"/swarm 实现用户通知模块，支持邮件和站内信"
+```
+
+Agent 自动执行的工作流：
+1. Agent 创建 Initiative，分解为里程碑
+2. Swarm 建立任务图：
+   - Agent A（claude-fable-5, high）：设计通知接口和数据库模型
+   - Agent B（gpt-5.5, low）：实现邮件发送器
+   - Agent C（gpt-5.5, low）：实现站内信
+   - Agent D（gpt-5.5, medium）：编写测试
+3. 依赖 Agent A 完成后，Agent B/C 并行开始
+4. 所有子任务完成后，Agent 汇总代码并验证一致性
+5. 更新 Initiative 进度到 100%
+
+#### 模板 3：代码审查工作流
+
+```
+原始模式:  逐文件看代码 → 记笔记 → 写审查意见 → 2 小时
+10x 模式:  Swarm 并行审查 → AI 汇总 → 你只看摘要 → 15 分钟
+
+# 一句话启动
+"/review"
+```
+
+Agent 自动执行的工作流：
+1. `git diff` 获取当前变更
+2. 按文件拆分为独立审查任务
+3. Swarm 并行审查每个文件（claude-fable-5, high）
+4. 汇总审查意见，按严重程度分类（blocker/major/minor）
+5. 在侧边栏展示审查报告
+
+#### 模板 4：技术调研工作流
+
+```
+原始模式:  手动 Google → 读 10 篇文章 → 做对比表格 → 3 小时
+10x 模式:  多 Agent 并行调研 → 汇总对比 → 15 分钟
+
+# 一句话启动
+"/research Rust Web 框架选型：Actix  vs Axum vs Rocket"
+```
+
+Agent 自动执行的工作流：
+1. 创建 3 个 Subagent，每个研究一个框架
+2. 每个 Subagent 搜索文档、GitHub、性能对比
+3. 汇总成对比表格（性能、生态、学习曲线、社区活跃度）
+4. 根据你的项目需求给出推荐
+
+#### 模板 5：批量重构工作流
+
+```
+原始模式:  逐步重构 → 反复编译 → 修冲突 → 2 天
+10x 模式:  Ambient 后台执行 → 醒来重构完成 → 2 小时
+
+# 一句话启动
+"/ambient 将项目中所有的 unwrap() 替换为 ? 操作符或 proper error handling"
+```
+
+Agent 自动执行的工作流：
+1. 创建 Initiative 追踪进度
+2. Agent grep 所有 unwrap() 位置，估算工作量
+3. 优先处理安全可替换的（Result 返回的上下文）
+4. 遇到复杂情况标记为待人工决策
+5. 每修改一批文件就跑 `cargo check` 验证
+6. 完成时提交 PR
+
+### 任务路由实战决策表
+
+| 任务描述 | 识别特征 | 推荐路由 | 预期效率提升 |
+|---------|---------|---------|------------|
+| "修复这个 Bug" | 异常行为、错误日志 | effort=high + Subagent | 5x |
+| "实现这个功能" | 清晰的需求描述 | Initiative + 直接对话 | 3x |
+| "重构这个大模块" | 范围广、文件多 | Initiative + Swarm Deep + Ambient | 8x |
+| "审查代码" | git diff, PR | Swarm Light + 并行审查 | 8x |
+| "调研选型" | 多方案对比 | Subagent x N + 汇总 | 12x |
+| "写单元测试" | 批量、重复模式 | Subagent 并行 + bash cargo test | 10x |
+| "分析日志" | 大量文本、找模式 | Subagent + agentgrep | 10x |
+| "检查 CI" | 定时、重复 | Schedule + Ambient | 100x（自动化） |
+| "安全审计" | 高风险、需严谨 | effort=xhigh + Swarm Deep | 5x |
+| "写文档/Changelog" | git log → 文本 | gpt-5.5 + effort=none | 10x |
+| "数据库迁移" | 结构变更、数据转换 | gpt-5.5 + effort=low + bash | 5x |
+| "部署上线" | 多步骤、高风险 | Ambient + Safety 审批 | 5x |
+
+### 配置你的路由系统
+
+Jcode 的路由行为通过多个配置文件控制，可以按项目定制：
+
+#### 自定义 swarm-prompt.md
+
+创建 `.jcode/swarm-prompt.md` 在你的项目根目录：
+
+```markdown
+# 项目级模型路由
+
+- 前端任务（TS/React）：`gpt-5.5` + `effort: "low"`
+- 后端逻辑（Rust）：`claude-api:claude-fable-5` + `effort: "medium"`
+- 数据库查询：`gpt-5.5` + `effort: "low"`
+- 安全相关：`claude-api:claude-fable-5` + `effort: "xhigh"`
+- 单元测试：`gpt-5.5` + `effort: "none"`
+- 集成测试：`claude-api:claude-fable-5` + `effort: "high"`
+```
+
+#### Jcode 全局配置
+
+```toml
+[agent]
+# 默认 effort 级别
+default_effort = "medium"
+
+# 允许 Agent 自动判断任务类型并调整 effort
+auto_effort = true
+
+# 允许 Agent 自动启用 Swarm（复杂任务识别）
+auto_swarm = true
+
+# Swarm 触发的任务复杂度阈值（文件数）
+swarm_trigger_file_count = 5
+
+[context]
+# 上下文预算，简单任务用少 token，复杂任务用多
+budget_tokens = 32000  # 默认，自动调整
+
+[ambient]
+# 后台任务默认 effort
+default_effort = "low"
+proactive_work = true
+```
+
+### "10 倍效率"的核心原则
+
+实现 10 倍效率提升不是靠 AI 本身有多强，而是靠**正确的任务-工具匹配**：
+
+| 原则 | 说明 |
+|------|------|
+| **不要浪费强模型** | 文本摘要用 gpt-5.5 + effort=none，架构设计用 claude-fable-5 + effort=high |
+| **能并行就不要串行** | Swarm 并行审查、Subagent 并行调研、任务图自动并行 |
+| **能后台就不要前台** | 批量重构交给 Ambient 后台执行，你做更有价值的事 |
+| **能委派就不要自己做** | Subagent 隔离复杂任务，主 Agent 保持上下文干净 |
+| **能自动就不要手动** | Schedule + Ambient 处理日常重复任务 |
+| **该等人决策时才等** | Safety 审批只拦截高风险操作，低风险 Agent 自主执行 |
+
+### 一句话总结
+
+> **任务路由 = 识别任务类型 → 匹配最优模型 + effort → 选择协作模式（直接/Subagent/Swarm/Ambient） → 自动执行。** 你只需要描述目标，Jcode 自动选择最锐利的刀，最快的方式，最合适的成本。这是 10 倍效率的核心引擎。
 
 ---
 
