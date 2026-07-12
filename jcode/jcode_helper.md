@@ -68,6 +68,16 @@
     - [运行时环境变量覆盖](#运行时环境变量覆盖)
   - [数据目录结构](#数据目录结构)
   - [内部命令（TUI 中可使用）](#内部命令tui-中可使用)
+    - [会话管理](#会话管理)
+    - [显示与界面](#显示与界面)
+    - [模型与提供商](#模型与提供商)
+    - [上下文与修复](#上下文与修复)
+    - [服务器与管理](#服务器与管理)
+    - [Agent 与协作](#agent-与协作)
+    - [目标与任务](#目标与任务)
+    - [Git 与发布](#git-与发布)
+    - [工具与快捷键](#工具与快捷键)
+    - [其他](#其他)
   - [记忆系统](#记忆系统)
     - [工作原理](#工作原理)
     - [记忆工具](#记忆工具)
@@ -99,7 +109,7 @@
   - [快捷键](#快捷键)
     - [输入编辑快捷键](#输入编辑快捷键)
     - [快捷键提示](#快捷键提示)
-  - [会话管理](#会话管理)
+  - [会话管理](#会话管理-1)
     - [创建/恢复会话](#创建恢复会话)
     - [跨工具会话恢复](#跨工具会话恢复)
   - [日志与调试](#日志与调试)
@@ -1247,23 +1257,12 @@ MCP 服务器使用 JSON 格式配置：
 
 ## 内部命令（TUI 中可使用）
 
-在聊天输入框中以 `/` 开头的指令会被解析为内部命令。
+在聊天输入框中以 `/` 开头的指令会被解析为内部命令。以下按功能分组列出。
+
+### 会话管理
 
 | 命令 | 说明 |
 |------|------|
-| `/alignment` | 切换对齐方式（左对齐/居中） |
-| `/model` | 切换模型 |
-| `/account` | 切换账号（多账号支持） |
-| `/reload` | 热重载服务器 |
-| `/ambient` | 触发后台环境模式 |
-| `/alignment [left\|center]` | 切换对齐方式 |
-| `/reasoning` | 切换推理内容显示模式（off → current → full → off） |
-| `/thinking` | `/reasoning` 的别名 |
-| `/diff [mode]` | 设置差异显示模式（off / inline / full-inline / pinned / file） |
-| `/compact` | 手动触发上下文压缩 |
-| `/compact mode [reactive\|proactive\|semantic]` | 设置压缩模式 |
-| `/fix` | 紧急修复当前会话 |
-| `/clear` | 清屏 |
 | `/save [label]` | 保存当前会话（可选标签） |
 | `/unsave` | 取消保存 |
 | `/rename [name]` | 重命名当前会话 |
@@ -1275,39 +1274,96 @@ MCP 服务器使用 JSON 格式配置：
 | `/split` | 同 `/fork` |
 | `/catchup` | 追赶共享服务器的历史消息 |
 | `/transfer` | 将会话转移到另一客户端 |
-| `/memory [status\|on\|off]` | 记忆系统状态或开关 |
-| `/swarm [status\|on\|off]` | Swarm 群体协作状态或开关 |
-| `/rewind [undo\|n]` | 回滚 `n` 轮对话，`/rewind undo` 撤销上次回滚 |
-| `/git [command]` | 执行 Git 命令 |
-| `/commit` | 交互式提交当前修改 |
-| `/commit-push` | 提交并推送 |
-| `/cut-release` | 创建新版本发布 |
-| `/transcript [path]` | 显示或设置转录文件路径 |
 | `/ssh [path]` | 切换到指定路径的会话 |
-| `/poke [on\|off\|status]` | 自动预取模式开关 |
+
+### 显示与界面
+
+| 命令 | 说明 |
+|------|------|
+| `/alignment [left\|center]` | 切换对齐方式（左对齐/居中） |
+| `/reasoning` | 切换推理内容显示模式（off → current → full → off） |
+| `/thinking` | `/reasoning` 的别名 |
+| `/diff [mode]` | 设置差异显示模式（off / inline / full-inline / pinned / file） |
+| `/compact-notifications [on\|off]` | 开关紧凑通知模式 |
+| `/show-agentgrep-output [on\|off]` | 开关显示搜索工具输出 |
+| `/clear` | 清屏 |
+
+### 模型与提供商
+
+| 命令 | 说明 |
+|------|------|
+| `/model` | 切换模型 |
+| `/account` | 切换账号（多账号支持） |
+| `/usage` | 显示 API 用量 |
+| `/subscription` | 显示 Jcode 订阅状态 |
+| `/provider-test-coverage` | 显示提供商验证覆盖 |
+| `/model-status` | 显示当前模型状态 |
+
+### 上下文与修复
+
+| 命令 | 说明 |
+|------|------|
+| `/compact` | 手动触发上下文压缩 |
+| `/compact mode [reactive\|proactive\|semantic]` | 设置压缩模式 |
+| `/rewind [undo\|n]` | 回滚 `n` 轮对话，`/rewind undo` 撤销上次回滚 |
+| `/fix` | 紧急修复当前会话 |
+| `/btw [text]` | 以旁白方式补充上下文给 Agent |
+
+### 服务器与管理
+
+| 命令 | 说明 |
+|------|------|
+| `/reload` | 热重载服务器 |
+| `/ambient` | 触发后台环境模式 |
+| `/log` | 显示服务器日志 |
+| `/config` | 显示当前配置摘要 |
+| `/config init` | 创建默认配置文件 |
+| `/config edit` | 打开配置文件编辑器 |
+
+### Agent 与协作
+
+| 命令 | 说明 |
+|------|------|
 | `/agents` | 查看/设置 Agent 参数 |
 | `/subagent [prompt]` | 生成子 Agent 执行任务 |
 | `/subagent-model [model]` | 设置子 Agent 默认模型 |
 | `/selfdev [prompt]` | 进入自开发模式 |
+| `/swarm [status\|on\|off]` | Swarm 群体协作状态或开关 |
+| `/memory [status\|on\|off]` | 记忆系统状态或开关 |
+
+### 目标与任务
+
+| 命令 | 说明 |
+|------|------|
 | `/initiatives` | 查看/管理目标列表 |
 | `/goals` | 同 `/initiatives` |
 | `/mission` | 查看当前任务 |
 | `/goal` | 查看当前目标 |
 | `/test` | 运行测试 |
-| `/dictate` | 触发语音听写 |
+
+### Git 与发布
+
+| 命令 | 说明 |
+|------|------|
+| `/git [command]` | 执行 Git 命令 |
+| `/commit` | 交互式提交当前修改 |
+| `/commit-push` | 提交并推送 |
+| `/cut-release` | 创建新版本发布 |
+
+### 工具与快捷键
+
+| 命令 | 说明 |
+|------|------|
 | `/keys` | 查看快捷键绑定 |
 | `/keybindings` | 同 `/keys` |
-| `/config` | 显示当前配置摘要 |
-| `/config init` | 创建默认配置文件 |
-| `/config edit` | 打开配置文件编辑器 |
-| `/usage` | 显示 API 用量 |
-| `/subscription` | 显示 Jcode 订阅状态 |
-| `/provider-test-coverage` | 显示提供商验证覆盖 |
-| `/model-status` | 显示当前模型状态 |
-| `/compact-notifications [on\|off]` | 开关紧凑通知模式 |
-| `/show-agentgrep-output [on\|off]` | 开关显示搜索工具输出 |
-| `/log` | 显示服务器日志 |
-| `/btw [text]` | 以旁白方式补充上下文给 Agent |
+| `/poke [on\|off\|status]` | 自动预取模式开关 |
+| `/dictate` | 触发语音听写 |
+| `/transcript [path]` | 显示或设置转录文件路径 |
+
+### 其他
+
+| 命令 | 说明 |
+|------|------|
 | `/feedback [text]` | 发送反馈 |
 | `/help` | 显示帮助信息 |
 | `/commands` | 列出所有可用命令 |
