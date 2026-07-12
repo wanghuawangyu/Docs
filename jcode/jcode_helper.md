@@ -88,6 +88,13 @@
     - [可视化表现](#可视化表现)
     - [思维链（CoT）vs 思维树（ToT）](#思维链cotvs-思维树tot)
     - [ReAct 框架（Reasoning + Acting）](#react-框架reasoning--acting)
+  - [检索增强生成（RAG）](#检索增强生成rag)
+    - [RAG 架构总览](#rag-架构总览)
+    - [自动 RAG（核心功能）](#自动-rag核心功能)
+    - [手动 RAG 检索](#手动-rag-检索)
+    - [知识库构建](#知识库构建)
+    - [其他检索源](#其他检索源)
+    - [配置选项](#配置选项-1)
   - [记忆系统](#记忆系统)
     - [工作原理](#工作原理)
     - [记忆工具](#记忆工具)
@@ -1667,6 +1674,120 @@ system_prompt_additions = """
 ```
 
 > **简单总结：** ReAct 不是 Jcode 的一个"功能"，而是 Jcode 的**核心架构**。每次你发送消息给 Jcode，它就已经在运行 ReAct 循环了：模型推理 → 调用工具 → 观察结果 → 再次推理，直到给出最终答案。这是 Agent 的基础工作模式，开箱即用，无需任何配置。
+
+---
+
+## 检索增强生成（RAG）
+
+**Jcode 内置了完整的 RAG（Retrieval-Augmented Generation）管道，核心载体就是其记忆系统（Memory System）。** 每次对话轮次中，Jcode 自动检索相关记忆信息并注入到模型上下文中，让模型在生成回答时拥有可靠的"外部知识"参考。
+
+### RAG 架构总览
+
+```
+                    ┌──────────────────────────────────────┐
+                    │           RAG 管道                       │
+                    │                                        │
+  ┌─────────┐       │  ┌──────────┐    ┌───────────┐       │  ┌──────────┐
+  │ 外部数据 │──────│─→│ 1. 检索   │───→│ 2. 注入    │──────│─→│ 3. 生成   │
+  │         │       │  │          │    │ (上下文)   │       │  │ (模型回答) │
+  │ • 会话记录 │    │  │ • 语义检索 │    │           │       │  └──────────┘
+  │ • 记忆条目 │    │  │ • 级联搜索 │    │ 作为用户    │       │
+  │ • 代码库  │    │  │ • 自动召回 │    │ 消息注入    │       │
+  │ • 网络    │    │  └──────────┘    └───────────┘       │
+  └─────────┘       └──────────────────────────────────────┘
+```
+
+### 自动 RAG（核心功能）
+
+每轮对话中，Jcode **自动执行以下流程**（无需用户或 Agent 手动操作）：
+
+| 步骤 | 描述 | 实现 |
+|------|------|------|
+| **① 语义嵌入** | 每次交互/响应自动将关键信息编码为语义向量 | all-MiniLM-L6-v2 本地嵌入模型 |
+| **② 自动检索** | 每轮对话前，自动用当前上下文查询记忆图，找出相关记忆 | `find_similar_scoped` / `find_similar_with_cascade` |
+| **③ 侧车验证** | 轻量级模型（GPT-5.6 Luna 或 Claude Haiku）验证检索结果的相关性 | `Sidecar` 结构体 |
+| **④ 注入上下文** | 验证通过的记忆以用户消息形式注入到模型上下文中 | `prepare_memory_injection_message` |
+| **⑤ 生成回答** | 模型基于"原始消息 + 检索到的记忆"生成回答 | 标准 ReAct 循环 |
+| **⑥ 后台整理** | Ambient 模式自动去重、合并、清理、聚类记忆 | Ambient 后台任务 |
+
+### 手动 RAG 检索
+
+除了自动召回，还可以通过 `memory` 工具手动检索：
+
+**语义检索（最常用）：**
+
+```
+memory { action: "recall", query: "项目的数据库架构是怎样的", mode: "semantic" }
+```
+
+**级联检索（语义 + 关联图遍历，找深度相关内容）：**
+
+```
+memory { action: "recall", query: "认证模块", mode: "cascade" }
+```
+
+**关键词搜索：**
+
+```
+memory { action: "search", query: "API 密钥" }
+```
+
+检索结果包含相关性评分（`relevance: 85%`），帮助模型判断信息可信度。
+
+### 知识库构建
+
+RAG 的效果取决于你存储了什么：
+
+```
+# 事实性知识
+memory { action: "remember", content: "数据库采用 PostgreSQL 15，主表 users 有 10 万条记录",
+         category: "fact", scope: "project", tags: ["database", "architecture"] }
+
+# 偏好/决策
+memory { action: "remember", content: "前端使用 React 18 + TypeScript，组件库 Ant Design",
+         category: "preference", scope: "project", tags: ["frontend", "tech-stack"] }
+
+# 实体关系
+memory { action: "remember", content: "支付模块依赖用户认证模块的 getUserId() 接口",
+         category: "entity", scope: "project", tags: ["payment", "dependency"] }
+```
+
+> **scope：** `project`（默认，当前项目可见）或 `global`（所有项目共享）
+
+### Agent 如何利用 RAG
+
+```
+"回忆一下之前讨论过的数据库设计方案，然后用这个方案设计新模块的表结构。"
+```
+
+Agent 会自动调用 `memory recall` 进行检索。
+
+### 其他检索源
+
+| 检索源 | 工具 | 适用场景 |
+|--------|------|---------|
+| **记忆系统** | `memory recall` / `memory search` | 项目知识、历史决策、技术偏好 |
+| **代码库** | `agentgrep` | 代码搜索、API 定义查找 |
+| **网络搜索** | `websearch` | 技术文档、Stack Overflow |
+| **网页内容** | `browser` / `webfetch` | 提取特定网页内容 |
+| **文件系统** | `read` / `ls` | 读取配置文件、日志 |
+
+这些检索工具都可以在 ReAct 循环中作为 Action 被模型调用。
+
+### 配置选项
+
+```toml
+[agents]
+# 记忆嵌入后端: "local"（默认，本地）或 "openai"（远程 API）
+memory_embedding_backend = "local"
+
+# 远程嵌入（当 backend = "openai" 时）
+# memory_embedding_model = "text-embedding-3-small"
+# memory_embedding_base_url = "https://api.openai.com/v1"
+# memory_embedding_dim = 1536
+```
+
+> **简单总结：** Jcode 的 RAG = **自动语义检索 + 侧车验证 + 上下文注入**（核心） + **手动检索工具**（补充） + **外部检索工具**（扩展）。开箱即用，无需额外配置。
 
 ---
 
